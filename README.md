@@ -1,4 +1,4 @@
-This GAMS code applies SCEQ to solve Baseline model with solar radiation modification tipping risk 
+This code applies SCEQ to solve Baseline model with solar radiation modification tipping risk 
 in the Supporting information of Zheng, Liao and Cai et.al (2024)
 
 The codes of two programs are included here, 
