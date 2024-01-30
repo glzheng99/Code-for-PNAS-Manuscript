@@ -1,0 +1,899 @@
+$ontext
+This GAMS code applies SCEQ to solve Baseline model with solar radiation modification tipping risk 
+in the Supporting information of Zheng, Liao and Cai et.al (2024)
+
+This code is based on
+(1) Cai, Y., and K.L. Judd (2023). A Simple but Powerful Simulated Certainty Equivalent
+*   Approximation Method for Dynamic Stochastic Problems. Quantitative Economics.
+(2) DICE 2023 with 5 year time periods given in the webpage:
+   https://williamnordhaus.com (DICE-2023- b-4-3-10).
+
+* If using material from this code, the user should cite the paper
+$offtext
+
+
+set        t  Time periods (1 years per period)                     /1*405/;
+alias(t, tt);
+
+parameter
+nu       hazard rate     /0.0035/
+SRMThresh Tat Threshold     /0.1/
+Jbar      tipped damage    /0.05/
+    st    starting period
+;
+st = 1;
+
+
+parameters 
+
+       Tatpart Share of temperature damage in total climate damage /0.8/
+       psi CO2 Damage    
+        Gcost  SRMcost  /0.0027/
+        Gdamage SRMdamage   /0.03/;
+        
+*adjust those paarameters for tstep=1 
+parameters
+        deland         Decline rate of land emissions (per period)   / .02 /
+        popadj   Growth rate to calibrate to 2050 pop projection   /0.029   /
+        ga00      Initial growth rate for TFP per 5 years          /0.066  /
+        ga0       adjust  Initial growth rate for TFP per  years                
+        periodfullpart Period at which have full participation      /105  /
+        delgback  Decline factor of gback per period                  /.19/
+        delgsig   Decline rate of gsigma per period                  /.99187/
+        beta   /0.985/
+        ;
+        ga0=ga00/4.852;
+
+*AS USUAL
+PARAMETERs
+        tstep       Years per Period                                  / 1  /
+** If optimal control
+        ifopt    Indicator where optimized is 1 and base is 0        /1/
+        
+** Population and technology
+        gama     Capital elasticity in production function        /.300    /
+        pop0     Initial world population 2020 (millions)         /7752.9  /
+        popasym  Asymptotic population (millions)                 /10825.  /
+        dk       Depreciation rate on capital (per year)          /.100    /
+        q0       Initial world output 2020 (trill 2019 USD)       /135.7   /
+         A0       Initial level of total factor productivity       /5.84 /
+        dela     Decline rate of TFP per 5 years                  /0.0015  /
+** Emissions parameters and Non-CO2 GHG
+        gsigma1   Initial growth of sigma (per year)                   / -0.015 /
+        asymgsig   Asympototic gsigma                                  /-.005/ 
+        e0        Industrial emissions 2020 (GtCO2 per year)           / 37.56  /
+        miu0      Emissions control rate historical 2020               / .05    /
+        fosslim   Maximum cumulative extraction fossil fuels (GtC)     / 6000   /
+        CumEmiss0 Cumulative emissions 2020 (GtC)                      / 633.5379/
+* Climate damage parameters
+        a10       Initial damage intercept                            /0      /
+        a1        Damage intercept                                    /0      /
+        a2base    Damage quadratic term rev 01-13-23                  /0.003467/
+        a3        Damage exponent                                     /2.00   /
+        Tdiff192040                                                   /0.4    /
+** Abatement cost
+        expcost2  Exponent of control cost function                   / 2.6  /
+        pback2050 Cost of backstop 2019$ per tCO2 2050                / 515.  /
+        pback     Cost of backstop 2019$ per tCO2 2020                / 707.7257  /
+        gback     Initial cost decline backstop cost per year         / -.012 /
+       cprice0   Carbon price (2019$ per tCO2 including regulation)  / 6    /
+        gcprice   Growth rate of base carbon price per year           /.025   /
+        
+** Limits on emissions controls
+        limmiu2070    Upper limit on control rate after 2050          / 1.   /
+        limmiu2120    Upper limit on control rate after 2100          / 1.1  /
+        delmiumax     Change upper bound of miu T 2 to 5              / .12  /
+** Preferences and timing
+        betaclim                                                    / 0.5  /
+        pi                                                          /0.05/
+        elasmu0   Elasticity of marginal utility of consumption     / 1.5  /
+        rhof      Riskfree real rate per year                       / .01  /
+        rhorisk0  Rate of risky social time preference per year     / .02  /
+** Calibration for beta 
+        k00       Initial K 2020 for beta = 1 (trill 2019 USD)      / 225     /
+        expk      Exponent for beta K calibration                   / -0.5762 /  
+** For redefinitions, not numerical
+        k0
+        elasmu
+        prstp  
+        a20       Initial damage quadratic term
+        a2        Damage in program
+        siggc1    Annual standard deviation of consumption growth   / .01 /
+        sig0      Carbon intensity 2020 (kgCO2 per output 2020 USD 2019 no policy)
+** Scaling so that MU(C(1)) = 1 and objective function = PV consumption
+        scale1      Multiplicative scaling coefficient                /0.009889 /
+        scale2      Additive scaling coefficient                      /-7776.944399/ ;;
+** Other calibration parameters
+        a2 = a2base;
+        a1=0.05;
+        k0 = 295;
+        elasmu = 0.95;     
+        prstp = rhof+betaclim*rhorisk0;
+        prstp = 0.001;      
+* Program control variables
+
+PARAMETERS
+        L(t)          Level of population and labor
+        aL(t)         Level of total factor productivity
+        sigma(t)      CO2-emissions output ratio
+        sigma1(t)
+        sigmatot(t)   GHG-output ratio
+        gA(t)         Growth rate of productivity from
+        gL(t)         Growth rate of labor and population
+        gcost1        Growth of cost factor
+        gsig(t)       Change in sigma (rate of decarbonization)
+        eland(t)      Emissions from deforestation (GtCO2 per year)
+        cost1tot(T)   Abatement cost adjusted for packstop and sigma
+        pbacktime(t)  Backstop price 2019$ per ton CO2
+        optlrsav      Optimal long-run savings rate used for transversality
+        scc(t)        Social cost of carbon
+        cpricebase(t) Carbon price in base case
+        photel(t)     Carbon Price under no damages (Hotelling rent condition)
+        ppm(t)        Atmospheric concentrations parts per million
+        atfrac2020(t)  Atmospheric share since 2020
+        atfrac1765(t)  Atmospheric fraction of emissions since 1765
+        abaterat(t)    Abatement cost per net output
+        miuup(t)       Upper bound on miu
+        gbacktime(t)   Decline rate of backstop price
+        rartp
+        varpcc(t)         Variance of per capita consumption 
+        rprecaut(t)       Precautionary rate of return
+        RR(t)             STP with precautionary factor
+        RR1(t)            STP factor without precautionary factor
+        prstp1(t)
+;
+** Dynamic parameter values        
+        L("1") = pop0; loop(t, L(t+1)=L(t););
+        loop(t, L(t+1)=L(t)*(popasym/L(t))**popadj ;);
+        gA(t)=gA0*exp(-dela*tstep*((t.val-1)));
+        aL("1") = A0; loop(t, aL(t+1)=aL(t)/((1-gA(t))););
+        rartp           = exp( prstp + betaclim*pi)-1;
+        varpcc(t)       =  min(Siggc1**2*(t.val-1),Siggc1**2*5*47);
+        rprecaut(t)     = -0.5*varpcc(t)*elasmu**2;
+        RR1(t)          = 1/((1+rartp)**(tstep*(t.val-1)));
+        RR(t)           = RR1(t)*(1+rprecaut(t))**(-tstep*(t.val-1));
+        prstp1(t)       = 1/(1+rartp)/(1+rprecaut(t));
+        RR(t)           = prstp1(t)**(tstep*(t.val-1));      
+        optlrsav = (dk + .004)/(dk + .004*elasmu + prstp)*gama;
+        cpricebase(t)= cprice0*(1+gcprice)**(tstep*(t.val-1));    
+        pbacktime(t)    = pback2050*exp(-5*(.01)*((t.val+4)/5-7));
+        pbacktime(t)$(t.val > 31) = pback2050*exp(-tstep*(.001)*(t.val-31));
+       sig0 = e0/(q0*(1-miu0));  
+        sigma("1")=sig0;
+        gsig(t)=min(gsigma1*delgsig **((t.val-1)),asymgsig);
+        loop(t, sigma(t+1)=sigma(t)*exp(tstep*gsig(t)););         
+
+** Emissions limits        
+        miuup('1')= .05;
+        miuup(t)$(t.val > 1) = 0.45+.05*((t.val)/5);
+        miuup(t)$(t.val > 51) = limmiu2070;        
+        miuup(t)$(t.val > 101) = limmiu2120;
+        
+* nonco2 Parameters      
+Parameters
+        CO2E_GHGabateB(t)         Abateable non-CO2 GHG emissions base
+        CO2E_GHGabateact(t)       Abateable non-CO2 GHG emissions base (actual)
+        F_Misc(t)                 Non-abateable forcings (GHG and other)
+        emissrat(t)               Ratio of CO2e to industrial emissions
+        sigmatot(t)               Emissions output ratio for CO2e       
+        FORC_CO2(t)               CO2 Forcings
+;      
+** Parameters for non-industrial emission
+** Assumes abateable share of non-CO2 GHG is 65%
+Parameters
+        eland0         Carbon emissions from land 2015 (GtCO2 per year)  / 5.9    /
+        F_Misc2020     Non-abatable forcings 2020                       /  -0.054    /
+        F_Misc2100     Non-abatable forcings 2100                        / .265/       
+        F_GHGabate2020 Forcings of abatable nonCO2 GHG                   / 0.518 /
+        F_GHGabate2100 Forcings of abatable nonCO2 GHG                   / 0.957 /
+        ECO2eGHGB2020  Emis of abatable nonCO2 GHG GtCO2e  2020             /  9.96/     
+        ECO2eGHGB2100  Emis of abatable nonCO2 GHG GtCO2e  2100             /  15.5 /     
+        emissrat2020   Ratio of CO2e to industrial CO2 2020                 / 1.40 /
+        emissrat2100   Ratio of CO2e to industrial CO2 2020                 / 1.21 /       
+        Fcoef1         Coefficient of nonco2 abateable emissions            /0.00955/
+        Fcoef2         Coefficient of nonco2 abateable emissions            /.861/
+        ;
+** Parameters emissions and non-CO2 
+        eland(t) = eland0*(1-deland)**(t.val-1);
+        eland(t) = eland0*(1-deland)**(t.val-1);       
+        CO2E_GHGabateB(t)=ECO2eGHGB2020+((ECO2eGHGB2100-ECO2eGHGB2020)/80)*(t.val-1)$(t.val le 80)+((ECO2eGHGB2100-ECO2eGHGB2020))$(t.val ge 81);
+        F_Misc(t)=F_Misc2020 +((F_Misc2100-F_Misc2020)/80)*(t.val-1)$(t.val le 80)+((F_Misc2100-F_Misc2020))$(t.val ge 81);
+        emissrat(t) = emissrat2020 +((emissrat2100-emissrat2020)/80)*(t.val-1)$(t.val le 80)+((emissrat2100-emissrat2020))$(t.val ge 81); 
+        sigmatot(t) = sigma(t)*emissrat(t);
+        cost1tot(t) = pbacktime(T)*sigmatot(T)/expcost2/1000;
+******************DFAIR********************************************************************
+PARAMETERS
+         yr0     Calendar year that corresponds to model year zero         /2020/
+        emshare0 Carbon emissions share into Reservoir 0   /0.2173/
+        emshare1 Carbon emissions share into Reservoir 1    /0.224/
+        emshare2 Carbon emissions share into Reservoir 2    /0.2824/
+        emshare3 Carbon emissions share into Reservoir 3    /0.2763/
+        tau0    Decay time constant for R0  (year)                            /1000000/
+        tau1    Decay time constant for R1  (year)                            /394.4/
+        tau2    Decay time constant for R2  (year)       /36.53/
+        tau3    Decay time constant for R3  (year) /4.304/
+
+        teq1    Thermal equilibration parameter for box 1 (m^2 per KW)         /0.324/
+        teq2    Thermal equilibration parameter for box 2 (m^2 per KW)        /0.44/
+        d1      Thermal response timescale for deep ocean (year)               /236/
+        d2      Thermal response timescale for upper ocean (year)              /4.07/
+ 
+        irf0    Pre-industrial IRF100 (year)                                        /32.4/
+        irC      Increase in IRF100 with cumulative carbon uptake (years per GtC)    /0.019/
+        irT      Increase in IRF100 with warming (years per degree K)                /4.165/
+        fco22x   Forcings of equilibrium CO2 doubling (Wm-2)                        /3.93/       
+
+** INITIAL CONDITIONS TO BE CALIBRATED TO HISTORY
+** CALIBRATION
+       mat0   Initial concentration in atmosphere in 2020 (GtC)       /886.5128014/
+       res00  Initial concentration in Reservoir 0 in 2020 (GtC)      /150.093 /
+       res10  Initial concentration in Reservior 1 in 2020 (GtC)      /102.698 /
+       res20  Initial concentration in Reservoir 2 in 2020 (GtC)      /39.534  /
+       res30  Initial concentration in Reservoir 3 in 2020 (GtC)      / 6.1865 /
+      mateq      Equilibrium concentration atmosphere  (GtC)            /588   /
+       tbox10    Initial temperature box 1 change in 2020 (C from 1765)  /0.1477  /
+       tbox20    Initial temperature box 2 change in 2020 (C from 1765)  /1.099454/
+       Tat0     Initial atmospheric temperature change in 2020          /1.24715 /     
+        
+;
+       psi=A2*Tat0*Tat0*(1-Tatpart)/((Mat0-Mateq)*(Mat0-Mateq));
+******************************************************************************************************  
+
+VARIABLES
+        g(t)
+        ECO2(t)         Total CO2 emissions (GtCO2 per year)
+        ECO2E(t)        Total CO2e emissions including abateable nonCO2 GHG (GtCO2 per year)
+        EIND(t)         Industrial CO2 emissions (GtCO2 per yr)
+        F_GHGabate(T)      Forcings abateable nonCO2 GHG     
+
+        MIU(t)          Emission control rate GHGs
+        C(t)            Consumption (trillions 2019 US dollars per year)
+        K(t)            Capital stock (trillions 2019 US dollars)
+        CPC(t)          Per capita consumption (thousands 2019 USD per year)
+        I(t)            Investment (trillions 2019 USD per year)
+        S(t)            Gross savings rate as fraction of gross world product
+        RI(t)           Real interest rate (per annum)
+        Y(t)            Gross world product net of abatement and damages (trillions 2019 USD per year)
+        YGROSS(t)       Gross world product GROSS of abatement and damages (trillions 2019 USD per year)
+        YNET(t)         Output net of damages equation (trillions 2019 USD per year)
+        DAMAGES(t)      Damages (trillions 2019 USD per year)
+        DAMFRAC(t)      Damages as fraction of gross output
+        ABATECOST(t)    Cost of emissions reductions  (trillions 2019 USD per year)
+        MCABATE(t)      Marginal cost of abatement (2019$ per ton CO2)
+        CCATOT(t)       Total carbon emissions (GtC)
+        PERIODU(t)      One period utility function
+        CPRICE(t)       Carbon price (2019$ per ton of CO2)
+        CEMUTOTPER(t)   Period utility
+        UTILITY         Welfare function
+;
+NONNEGATIVE VARIABLES  MIU, Tat, MAT, MU, ML, Y, YNET, YGROSS, C, K, I;
+VARIABLES
+        FORC(t)        Increase in radiative forcing (watts per m2 from 1765)
+        Tat(t)        Increase temperature of atmosphere (degrees C from 1765)     
+        TBOX1(t)       Increase temperature of box 1 (degrees C from 1765)
+        TBOX2(t)       Increase temperature of box 2 (degrees C from 1765)
+        RES0(t)        Carbon concentration in Reservoir 0 (GtC from 1765)
+        RES1(t)        Carbon concentration in Reservoir 1 (GtC from 1765)
+        RES2(t)        Carbon concentration in Reservoir 2 (GtC from 1765)
+        RES3(t)        Carbon concentration in Reservoir 3 (GtC from 1765)
+        MAT(t)         Carbon concentration increase in atmosphere (GtC from 1765)
+        CACC(t)        Accumulated carbon in ocean and other sinks (GtC)
+        IRFt(t)        IRF100 at time t
+        alpha(t)       Carbon decay time scaling factor
+        SumAlpha      Placeholder variable for objective function;
+NONNEGATIVE VARIABLES   Tat, MAT,  IRFt, alpha,g;
+
+EQUATIONS
+        FORCE(t)        Radiative forcing equation
+        RES0LOM(t)      Reservoir 0 law of motion
+        RES1LOM(t)      Reservoir 1 law of motion
+        RES2LOM(t)      Reservoir 2 law of motion
+        RES3LOM(t)      Reservoir 3 law of motion
+        MMAT(t)         Atmospheric concentration equation
+        Cacceq(t)       Accumulated carbon in sinks equation
+        TatEQ(t)       Temperature-climate equation for atmosphere
+        TBOX1EQ(t)      Temperature box 1 law of motion
+        TBOX2EQ(t)      Temperature box 2 law of motion
+        IRFeqLHS(t)     Left-hand side of IRF100 equation
+        IRFeqRHS(t)     Right-hand side of IRF100 equation
+
+;    
+** Equations of the model
+    res0lom(t+1)$(ord(t)>=st and ord(t)<card(t))..   RES0(t+1) =E=  (emshare0*tau0*alpha(t+1)*(Eco2(t)/3.667))*(1-exp(-tstep/(tau0*alpha(t+1))))+Res0(t)*exp(-tstep/(tau0*alpha(t+1)));
+    res1lom(t+1)$(ord(t)>=st and ord(t)<card(t))..   RES1(t+1) =E=  (emshare1*tau1*alpha(t+1)*(Eco2(t)/3.667))*(1-exp(-tstep/(tau1*alpha(t+1))))+Res1(t)*exp(-tstep/(tau1*alpha(t+1)));
+    res2lom(t+1)$(ord(t)>=st and ord(t)<card(t))..   RES2(t+1) =E=  (emshare2*tau2*alpha(t+1)*(Eco2(t)/3.667))*(1-exp(-tstep/(tau2*alpha(t+1))))+Res2(t)*exp(-tstep/(tau2*alpha(t+1)));
+    res3lom(t+1)$(ord(t)>=st and ord(t)<card(t))..   RES3(t+1) =E=  (emshare3*tau3*alpha(t+1)*(Eco2(t)/3.667))*(1-exp(-tstep/(tau3*alpha(t+1))))+Res3(t)*exp(-tstep/(tau3*alpha(t+1)));
+    mmat(t)$(ord(t)>=st and ord(t)<=card(t))..       MAT(t)     =E=   mateq+Res0(t)+Res1(t)+Res2(t)+Res3(t);
+    cacceq(t)$(ord(t)>=st and ord(t)<=card(t))..     Cacc(t)    =E=  (CCATOT(t)-(MAT(t)-mateq));
+    force(t)$(ord(t)>=st and ord(t)<=card(t))..      FORC(t)    =E=  (fco22x*((log((MAT(t)/mateq))/log(2))) + F_Misc(t)+F_GHGabate(t))*(1-g(t));  
+    tbox1eq(t+1)$(ord(t)>=st and ord(t)<card(t))..   Tbox1(t+1) =E=  Tbox1(t)*exp(-tstep/d1)+teq1*Forc(t)*(1-exp(-tstep/d1));
+    tbox2eq(t+1)$(ord(t)>=st and ord(t)<card(t))..   Tbox2(t+1) =E=  Tbox2(t)*exp(-tstep/d2)+teq2*Forc(t)*(1-exp(-tstep/d2));
+    Tateq(t+1)$(ord(t)>=st and ord(t)<card(t))..     Tat(t+1)   =E=   Tbox1(t+1)+Tbox2(t+1);
+    irfeqlhs(t)$(ord(t)>=st and ord(t)<=card(t))..   IRFt(t)    =E=  ((alpha(t)*emshare0*tau0*(1-exp(-100/(alpha(t)*tau0))))+(alpha(t)*emshare1*tau1*(1-exp(-100/(alpha(t)*tau1))))+(alpha(t)*emshare2*tau2*(1-exp(-100/(alpha(t)*tau2))))+(alpha(t)*emshare3*tau3*(1-exp(-100/(alpha(t)*tau3)))));
+    irfeqrhs(t)$(ord(t)>=st and ord(t)<=card(t))..   IRFt(t)    =E=  irf0+irC*Cacc(t)+irT*Tat(t);
+
+****************************************************************************************************
+Variables
+T5bar(t)
+T10bar(t)
+CO2Dam(t)
+U100
+U150
+U200
+probs(t)
+;
+
+Equations
+ CO2Dameq(t)
+*NonCO2
+        ECO2eq(t)         CO2 Emissions equation
+        F_GHGabateEQ(t)
+         damfraceq(t)
+*Emissions and Damages
+        CCATOTEQ(t)       Cumulative total carbon emissions
+*Economic variables
+        YGROSSEQ(t)      Output gross equation
+        YY(t)            Output net equation
+        KK(t)            Capital balance equation
+        kktipped(t)
+        NoTippingProbability1(T)
+        NoTippingProbability2(T)
+* Utility
+      UTIL             Objective function
+;
+  
+
+** Equations of the model
+ eco2eq(t)$(ord(t)>=st and ord(t)<card(t))..          ECO2(t)        =E= (sigma(t)*YGROSS(t) + eland(t))*(1-(MIU(t)));
+ damfraceq(t)$(ord(t)>=st and ord(t)<card(t)) ..      DAMFRAC(t)     =E= Tatpart*a2*(Tat(t))**a3+a1*(Tat(t)-T5bar(t))*(Tat(t)-T5bar(t));
+ CO2Dameq(t)$(ord(t)>=st and ord(t)<card(t))..          CO2Dam(t)       =E=  psi*(Mat(t)-mateq)*(Mat(t)-mateq);
+ ygrosseq(t)$(ord(t)>=st and ord(t)<card(t))..        YGROSS(t)      =E= (aL(t)*(L(t)/1000)**(1-gama))*(K(t)**gama);
+ yy(t)$(ord(t)>=st and ord(t)<card(t))..              Y(t)           =E= YGROSS(t)*(1-damfrac(t)-CO2Dam(t)- COST1TOT(T) * (MIU(T)**EXPCOST2)-(Gcost+Gdamage)*g(t)*g(t) );
+ F_GHGabateEQ(t)$(ord(t)>=st and ord(t)<card(t))..  F_GHGabate(t+1) =E= Fcoef2*F_GHGabate(t)+ Fcoef1*CO2E_GHGabateB(t)*(1-(MIU(t)));
+ ccatoteq(t)$(ord(t)>=st and ord(t)<card(t))..      CCATOT(t+1)    =E= CCATOT(t) +  ECO2(T)*(tstep/3.666) ;
+ kk(t)$(ord(t)>=st and ord(t)<card(t))..            K(t+1)         =L= (1-dk)**tstep * K(t) + tstep * ((1-(1-probs(t))*Jbar)*Y(t) - C(t));
+ kktipped(t)$(ord(t)>=st and ord(t)<card(t))..      K(t+1)         =L= (1-dk)**tstep * K(t) + tstep * ((1-Jbar)*Y(t) - C(t));
+ NoTippingProbability1(T)$(ord(t)>=st and ord(t)<card(t))..	Probs(T+1) =l= exp(-nu*(g(t)-SRMThresh)) * Probs(T);
+ NoTippingProbability2(T)$(ord(t)>=st and ord(t)<card(t))..	Probs(T+1) =l= Probs(T);
+
+**Utility or objective function
+ util..               UTILITY        =E= tstep * scale1 * sum(t$(ord(t)>=st and ord(t)<card(t)),  ((((C(T)*1000/L(T))**(1-elasmu))/(1-elasmu)) * L(t)*(prstp1(t)**(tstep*(ord(t)-st))))) + scale2 ; 
+
+Equations
+T5bareq(t)
+T10bareq(t)
+;
+
+T5bareq(t)$(ord(t)>=st and ord(t)<card(t))..
+                T5bar(t)=e=Tat(t)$(ORD(T) eq st)
+                           +((Tat(t)+Tat(t-1))/2)$(ORD(T) eq st+1)
+                           +((Tat(t)+Tat(t-1)+Tat(t-2))/3)$(ORD(T) eq st+2)
+                           +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3))/4)$(ORD(T) eq st+3)
+                           +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4))/5)$(ORD(T) GE st+4);
+                           
+T10bareq(t)$(ord(t)>=st and ord(t)<card(t))..
+    T10bar(t)=e=Tat(t)$(ORD(T) eq st)
+                +((Tat(t)+Tat(t-1))/2)$(ORD(T) eq st+1)
+                +((Tat(t)+Tat(t-1)+Tat(t-2))/3)$(ORD(T) eq st+2)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3))/4)$(ORD(T) eq st+3)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4))/5)$(ORD(T) eq st+4)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4)+Tat(t-5))/6)$(ORD(T) eq st+5)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4)+Tat(t-5)+Tat(t-6))/7)$(ORD(T) eq st+6)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4)+Tat(t-5)+Tat(t-6)+Tat(t-7))/8)$(ORD(T) eq st+7)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4)+Tat(t-5)+Tat(t-6)+Tat(t-7)+Tat(t-8))/9)$(ORD(T) eq st+8)
+                +((Tat(t)+Tat(t-1)+Tat(t-2)+Tat(t-3)+Tat(t-4)+Tat(t-5)+Tat(t-6)+Tat(t-7)+Tat(t-8)+Tat(t-9))/10)$(ORD(T) GE st+9);
+                
+
+*******************************
+**  Upper and lower bounds for stability
+
+parameters
+
+gup(t);
+gup(t) = 1;
+g.up(t) = gup(t);
+g.lo(t)=0;
+miu.up(t) = 1;
+K.LO(t)         = 1;
+C.LO(t)         = 2;
+CPC.LO(t)       = .01;
+MAT.LO(t)       = 10;
+Tat.UP(t)      = 20;
+alpha.up(t) = 100;
+alpha.lo(t) = 0.1;
+
+**********************************
+
+** Solution options
+option iterlim = 99900;
+option reslim = 99999;
+option solprint = on;
+option limrow = 0;
+option limcol = 0;
+option nlp = conopt;
+
+
+model  SRM       / KK,NoTippingProbability1,NoTippingProbability2,T5bareq,T10bareq,CO2Dameq,ECO2eq,F_GHGabateEQ,damfraceq,CCATOTEQ,YGROSSEQ,YY, FORCE, MMAT,RES0LOM,RES1LOM, RES2LOM,RES3LOM, Cacceq,TATEQ, TBOX1EQ, TBOX2EQ,IRFeqLHS,IRFeqRHS, Util /;
+
+model  SRMtipped                                       / kktipped,T5bareq,T10bareq,CO2Dameq,ECO2eq,F_GHGabateEQ,damfraceq,CCATOTEQ,YGROSSEQ,YY, FORCE, MMAT,RES0LOM,RES1LOM, RES2LOM,RES3LOM, Cacceq,TATEQ, TBOX1EQ, TBOX2EQ,IRFeqLHS,IRFeqRHS, Util /;
+     
+
+set npath /1*102/;
+parameter Nt   number of periods of interest;
+Nt = card(npath)-2;
+
+********************solve ban SRM solution(Deterministic)***************
+st=1;
+Jbar=0;
+g.fx(t)=0;
+* Initial conditions
+ccatot.fx('1') = CumEmiss0;
+k.FX('1')      = k0;
+F_GHGabate.fx('1') = F_GHGabate2020;
+Tat.FX('1')   = Tat0;
+Res0.fx('1') = Res00;
+Res1.fx('1') = Res10;
+Res2.fx('1') = Res20;
+Res3.fx('1') = Res30;
+Tbox1.fx('1') = Tbox10;
+Tbox2.fx('1') = Tbox20;
+*set different parameters value for sensitivity analysis
+*a1=0.03;
+*a1=0.2;
+*a1=0.1;
+*a1=0;
+*a1=0.3;
+
+solve SRMtipped using nlp maximizing UTILITY;
+
+ 
+parameter
+    SCC_ban(t)
+    tax_ban(t);
+
+SCC_ban(t) =-1000* (Eco2eq.m(t))/(KKtipped.m(t)+0.00000000001);
+tax_ban(t)= pbacktime(t) * (miu.l(t))**(expcost2-1);
+
+
+file SCEQ_SRM_DamTip_sol_ban;
+put SCEQ_SRM_DamTip_sol_ban;
+SCEQ_SRM_DamTip_sol_ban.nw = 12;
+SCEQ_SRM_DamTip_sol_ban.nr = 2;
+SCEQ_SRM_DamTip_sol_ban.nd = 3;
+SCEQ_SRM_DamTip_sol_ban.nz = 1e-15;
+
+
+  loop(tt$(ord(tt)<=Nt),
+    put tt.tl:4:0;
+    put Miu.l(tt):13:5;
+    put g.l(tt):13:5;   
+    put Tat.l(tt):13:5;
+    put SCC_ban(tt):13:5;
+    put tax_ban(tt):13:5;
+    put C.l(tt):13:5;
+    put K.l(tt):13:5;
+    put Mat.l(tt):13:5;
+
+    put /;
+  );
+
+
+
+
+******************solve the allow SRM but no tipping risk solution(Deterministic)*******************
+st=1;
+Jbar=0;
+g.up(t) = gup(t);
+g.lo(t)=0;
+* Initial conditions
+ccatot.fx('1') = CumEmiss0;
+k.FX('1')      = k0;
+F_GHGabate.fx('1') = F_GHGabate2020;
+Tat.FX('1')   = Tat0;
+Res0.fx('1') = Res00;
+Res1.fx('1') = Res10;
+Res2.fx('1') = Res20;
+Res3.fx('1') = Res30;
+Tbox1.fx('1') = Tbox10;
+Tbox2.fx('1') = Tbox20;
+***************
+*a1=0.03;
+*a1=0.2;
+*a1=0.1;
+*a1=0;
+*a1=0.3;
+*g.fx(t)=0;
+
+*psi=0.5*A2*Tat0*Tat0*(1-Tatpart)/((Mat0-Mateq)*(Mat0-Mateq));
+*Tatpart=0.9;
+*Gdamage=0.02;
+*Gdamage=0.0;
+solve SRMtipped using nlp maximizing UTILITY;
+
+***************************
+ 
+parameter
+    SCC(t)
+    tax(t);
+
+SCC(t) =-1000* (Eco2eq.m(t))/(KKtipped.m(t)+0.00000000001);
+tax(t)= pbacktime(t) * (miu.l(t))**(expcost2-1);
+
+
+file SCEQ_SRM_DamTip_sol_det;
+put SCEQ_SRM_DamTip_sol_det;
+SCEQ_SRM_DamTip_sol_det.nw = 12;
+SCEQ_SRM_DamTip_sol_det.nr = 2;
+SCEQ_SRM_DamTip_sol_det.nd = 3;
+SCEQ_SRM_DamTip_sol_det.nz = 1e-15;
+
+
+  loop(tt$(ord(tt)<=Nt),
+    put tt.tl:4:0;
+    put Miu.l(tt):13:5;
+    put g.l(tt):13:5;   
+    put Tat.l(tt):13:5;
+    put SCC(tt):13:5;
+    put tax(tt):13:5;
+    put C.l(tt):13:5;
+    put K.l(tt):13:5;
+    put Mat.l(tt):13:5;
+
+    put /;
+  );
+
+********************solve stochastic solution***************                                                                               
+Jbar=0.05;
+*set different parameters value for sensitivity analysis
+*Jbar=0.10;   
+*Jbar=0.72;
+*Jbar=0.1;
+*nu=0.0070;
+*nu=0.0111;
+*SRMThresh=0.3;
+*SRMThresh=0;
+
+parameter
+
+Cpath(t,npath)
+Miupath(t,npath)
+gPath(t,npath)
+
+ccatotpath(t,npath)
+F_GHGabatepath(t,npath)
+Kpath(t,npath)
+
+MATpath(t,npath)  
+Tatpath(t,npath)
+Res0path(t,npath)
+Res1path(t,npath)
+Res2path(t,npath)
+Res3path(t,npath)
+Tbox1path(t,npath)
+Tbox2path(t,npath)
+IRFTpath(t,npath)
+T5barpath(t,npath)
+T30barpath(t,npath)
+alphaPath(t,npath)
+Fpath(t,npath)
+
+lamECO2path(t,npath) 
+lamKpath(t,npath)    shadow prices
+lamMATpath(t,npath)    shadow prices
+lamTatpath(t,npath)    shadow prices
+lamRes0path(t,npath)    shadow prices
+lamRes1path(t,npath)    shadow prices
+lamRes2path(t,npath)    shadow prices
+lamRes3path(t,npath)    shadow prices
+lamF_GHGabatepath(t,npath)    shadow prices
+lamCcatotpath(t,npath)    shadow prices
+lamTbox1path(t,npath)    shadow prices
+lamTbox2path(t,npath)    shadow prices
+lamIRFTpath(t,npath)  
+GrossYpath(t,npath)
+Ypath(t,npath)
+Upath(t,npath)
+;
+
+
+Kpath(t,npath) = 1;
+MATpath(t,npath) = 1;
+TATpath(t,npath) = 0;
+miupath(t,npath) = 0;
+Cpath(t,npath) = 0;
+;
+    
+parameter
+    opt_SCC(t,npath)
+    opt_tax(t,npath);
+
+* solve the pre-tipping path
+loop(npath$(ord(npath)=1),
+    st = 1;
+ 
+* Initial conditions   
+ccatot.fx('1') = CumEmiss0;
+k.FX('1')      = k0;
+F_GHGabate.fx('1') = F_GHGabate2020;
+
+*MAT.FX('1')    = mat0;
+Tat.FX('1')   = Tat0;
+Res0.fx('1') = Res00;
+Res1.fx('1') = Res10;
+Res2.fx('1') = Res20;
+Res3.fx('1') = Res30;
+Tbox1.fx('1') = Tbox10;
+Tbox2.fx('1') = Tbox20;
+* Probability that tipping event has not happened by the beginning of period t    
+Probs.fx('1') = 1;
+    
+solve srm using nlp maximizing UTILITY;
+
+ccatotpath('1',npath) =ccatot.l('1') ;
+F_GHGabatepath('1',npath) =F_GHGabate.l('1');
+Kpath('1',npath) =K.l('1');
+
+MATpath('1',npath) =MAT.l('1');
+Tatpath('1',npath)=Tat.l('1');
+Res0path('1',npath)=Res0.l('1');
+Res1path('1',npath)=Res1.l('1');
+Res2path('1',npath)=Res2.l('1');
+Res3path('1',npath)=Res3.l('1');
+Tbox1path('1',npath)=Tbox1.l('1');
+Tbox2path('1',npath)=Tbox2.l('1');
+*record best choice in t1 and shadow price
+*control variables result
+Cpath('1',npath)    =C.l('1');
+gPath('1',npath)    =g.l('1')+0.00000000001;
+Miupath('1',npath)  =Miu.l('1');
+
+*shadow price result
+
+lamECO2path('1',npath)        =eco2eq.m('1');
+lamKpath('1',npath)           =KK.m('1');
+lamMATpath('1',npath)         =MMAT.m('1');
+lamTatpath('1',npath)         =TATEQ.m('1');
+lamRes0path('1',npath)        =RES0LOM.m('1');
+lamRes1path('1',npath)        =RES1LOM.m('1');
+lamRes2path('1',npath)        =RES2LOM.m('1');
+lamRes3path('1',npath)        =RES3LOM.m('1');
+lamF_GHGabatepath('1',npath)  =F_GHGabateEQ.m('1');  
+lamCcatotpath('1',npath)      =CcatotEQ.m('1');
+lamTbox1path('1',npath)       =TBOX1EQ.m('1');
+lamTbox2path('1',npath)       =TBOX2EQ.m('1');
+
+*intersted variables
+opt_SCC('1',npath) =-1000* (Eco2eq.m('1'))/(KK.m('1')+0.00000000001);
+opt_tax('1',npath)= pbacktime('1') * (miu.l('1'))**(expcost2-1);
+
+    loop(tt$(ord(tt)>1 and ord(tt)<=card(npath)),
+* move one step forward
+       st=ord(tt);
+
+* fix the state variable at s conditional on that the tipping event has not happened
+ccatot.fx(tt)     = ccatot.l(tt);
+F_GHGabate.fx(tt) = F_GHGabate.l(tt);
+k.FX(tt)          = K.l(tt);
+
+*MAT.FX(tt)     = MAT.l(tt) ;
+Tat.FX(tt)     = Tat.l(tt);
+Res0.fx(tt)    = Res0.l(tt);
+Res1.fx(tt)    = Res1.l(tt);
+Res2.fx(tt)    = Res2.l(tt);
+Res3.fx(tt)    = Res3.l(tt);
+Tbox1.fx(tt)   = Tbox1.l(tt);
+Tbox2.fx(tt)   = Tbox2.l(tt);
+
+    
+* Probability that tipping event has not happened by the beginning of period t
+ Probs.fx(tt)=1;
+            
+solve srm using nlp maximizing UTILITY;
+            
+*record best choice in t1 and shadow price
+*control variables result
+
+ccatotpath(tt,npath)=ccatot.l(tt);
+F_GHGabatepath(tt,npath)=F_GHGabate.l(tt);
+Kpath(tt,npath)=k.l(tt);
+
+MATpath(tt,npath) =MAT.l(tt);
+Tatpath(tt,npath)=Tat.l(tt);
+Res0path(tt,npath)=Res0.l(tt);
+Res1path(tt,npath)=Res1.l(tt);
+Res2path(tt,npath)=Res2.l(tt);
+Res3path(tt,npath)=Res3.l(tt);
+Tbox1path(tt,npath)=Tbox1.l(tt);
+Tbox2path(tt,npath)=Tbox2.l(tt);
+
+Cpath(tt,npath)    =C.l(tt);
+gPath(tt,npath)    =g.l(tt)+0.00000000001;
+Miupath(tt,npath)  =Miu.l(tt);
+
+*shadow price result
+lamECO2path(tt,npath)        =eco2eq.m(tt);
+lamKpath(tt,npath)           =KK.m(tt);
+lamMATpath(tt,npath)         =MMAT.m(tt);
+lamTatpath(tt,npath)         =TATEQ.m(tt);
+lamRes0path(tt,npath)        =RES0LOM.m(tt);
+lamRes1path(tt,npath)        =RES1LOM.m(tt);
+lamRes2path(tt,npath)        =RES2LOM.m(tt);
+lamRes3path(tt,npath)        =RES3LOM.m(tt);
+lamF_GHGabatepath(tt,npath)  =F_GHGabateEQ.m(tt);  
+lamCcatotpath(tt,npath)      =CcatotEQ.m(tt);
+lamTbox1path(tt,npath)       =TBOX1EQ.m(tt);
+lamTbox2path(tt,npath)       =TBOX2EQ.m(tt);
+*intersted variables
+
+opt_SCC(tt,npath) =-1000* (Eco2eq.m(tt))/(KK.m(tt)+0.00000000001);
+opt_tax(tt,npath)= pbacktime(tt) * (miu.l(tt))**(expcost2-1);
+    
+);
+
+* relax the fixed constraints on the state variables
+
+
+ccatot.up(t)         = 10000 ;
+ccatot.lo(t)         =  0;
+F_GHGabate.up(t)     = 10 ;
+F_GHGabate.lo(t)     = 0;
+k.up(t)       =1000000    ;
+k.lo(t)       =0.01 ;
+MAT.up(t)     = 100000;
+MAT.lo(t)     = 0;
+Tat.up(t)     = 40;
+Tat.lo(t)     =0 ;
+Res0.up(t)       = 1000 ;
+Res0.lo(t)       = 0;
+Res1.up(t)       = 1000;
+Res1.lo(t)       = 0;
+Res2.up(t)       = 1000;
+Res2.lo(t)       = 0;
+Res3.up(t)       = 100;
+Res3.lo(t)       = 0;
+Tbox1.up(t)       =10 ;
+Tbox1.lo(t)       =-10;
+Tbox2.up(t)       =10 ;
+Tbox2.lo(t)       =-10 ;
+);    
+
+
+
+
+parameter firstTip;
+loop(tt,
+    if(gpath(tt,'1') > SRMThresh,
+      firstTip = ord(tt)+1;
+      break;
+    );
+);
+
+******************************************************************
+********************* solve the tipped paths**********************
+******************************************************************
+loop(npath$(ord(npath)>=firstTip),
+
+    st = ord(npath);
+
+* fix the state variable at s conditional on that the tipping event has not happened
+ccatot.fx(tt)$(ord(tt)=st)       = ccatotpath(tt,'1');
+F_GHGabate.fx(tt)$(ord(tt)=st)   = F_GHGabatepath(tt,'1');
+k.FX(tt)$(ord(tt)=st)            = Kpath(tt,'1');
+*MAT.FX(tt)$(ord(tt)=st)          = MATpath(tt,'1') ;
+Tat.FX(tt)$(ord(tt)=st)          = Tatpath(tt,'1');
+Res0.fx(tt)$(ord(tt)=st)         = Res0path(tt,'1');
+Res1.fx(tt)$(ord(tt)=st)         = Res1path(tt,'1');
+Res2.fx(tt)$(ord(tt)=st)         = Res2path(tt,'1');
+Res3.fx(tt)$(ord(tt)=st)         = Res3path(tt,'1');
+Tbox1.fx(tt)$(ord(tt)=st)        = Tbox1path(tt,'1');
+Tbox2.fx(tt)$(ord(tt)=st)        = Tbox2path(tt,'1');
+
+
+    
+* if tipping event happended at period ord(npath)
+solve SRMtipped using nlp maximizing UTILITY;
+
+
+*state variables
+ccatotpath(t,npath)$(ord(t)>=st)     =ccatot.l(t);
+F_GHGabatepath(t,npath)$(ord(t)>=st) =F_GHGabate.l(t);
+Kpath(t,npath)$(ord(t)>=st)          =k.l(t);
+MATpath(t,npath)$(ord(t)>=st)        =MAT.l(t);
+Tatpath(t,npath)$(ord(t)>=st)        =Tat.l(t);
+Res0path(t,npath)$(ord(t)>=st)       =Res0.l(t);
+Res1path(t,npath)$(ord(t)>=st)       =Res1.l(t);
+Res2path(t,npath)$(ord(t)>=st)       =Res2.l(t);
+Res3path(t,npath)$(ord(t)>=st)       =Res3.l(t);
+Tbox1path(t,npath)$(ord(t)>=st)      =Tbox1.l(t);
+Tbox2path(t,npath)$(ord(t)>=st)      =Tbox2.l(t);
+
+*control variables
+Cpath(t,npath)    $(ord(t)>=st)      =C.l(t);
+gPath(t,npath)    $(ord(t)>=st)      =g.l(t);
+Miupath(t,npath)  $(ord(t)>=st)      =Miu.l(t);
+
+*shadow price result
+
+lamECO2path(t,npath)        $(ord(t)>=st)=eco2eq.m(t);
+lamKpath(t,npath)           $(ord(t)>=st)=KKtipped.m(t);
+lamMATpath(t,npath)         $(ord(t)>=st)=MMAT.m(t);
+lamTatpath(t,npath)         $(ord(t)>=st)=TATEQ.m(t);
+lamRes0path(t,npath)        $(ord(t)>=st)=RES0LOM.m(t);
+lamRes1path(t,npath)        $(ord(t)>=st)=RES1LOM.m(t);
+lamRes2path(t,npath)        $(ord(t)>=st)=RES2LOM.m(t);
+lamRes3path(t,npath)        $(ord(t)>=st)=RES3LOM.m(t);
+lamF_GHGabatepath(t,npath)  $(ord(t)>=st)=F_GHGabateEQ.m(t);  
+lamCcatotpath(t,npath)      $(ord(t)>=st)=CcatotEQ.m(t);
+lamTbox1path(t,npath)       $(ord(t)>=st)=TBOX1EQ.m(t);
+lamTbox2path(t,npath)       $(ord(t)>=st)=TBOX2EQ.m(t);
+
+
+* relax the fixed constraints on the state variables
+
+
+
+ccatot.up(t)         = 10000 ;
+ccatot.lo(t)         =  0;
+F_GHGabate.up(t)     = 10 ;
+F_GHGabate.lo(t)     = 0;
+k.up(t)       =1000000    ;
+k.lo(t)       =0.01 ;
+MAT.up(t)     = 100000;
+MAT.lo(t)     = 0;
+Tat.up(t)     = 40;
+Tat.lo(t)     =0 ;
+Res0.up(t)       = 1000 ;
+Res0.lo(t)       = 0;
+Res1.up(t)       = 1000;
+Res1.lo(t)       = 0;
+Res2.up(t)       = 1000;
+Res2.lo(t)       = 0;
+Res3.up(t)       = 100;
+Res3.lo(t)       = 0;
+Tbox1.up(t)       =10 ;
+Tbox1.lo(t)       =-10;
+Tbox2.up(t)       =10 ;
+Tbox2.lo(t)       =-10 ;
+
+*intersted variables
+opt_SCC(tt,npath) $(ord(tt)>=st) =-1000* (Eco2eq.m(tt))/(lamKpath(tt,npath)+0.00000000001);
+opt_tax(tt,npath)$(ord(tt)>=st)= pbacktime(tt) * (miu.l(tt))**(expcost2-1);
+opt_tax(tt,npath)$(ord(npath)>1) = opt_tax(tt,npath) * (1 - Jbar);
+
+);
+
+* Output solutions 
+** save the different paths for simulation by other software like Matlab
+
+file SCEQ_SRM_DamTip_sol;
+put SCEQ_SRM_DamTip_sol;
+SCEQ_SRM_DamTip_sol.nw = 12;
+SCEQ_SRM_DamTip_sol.nr = 2;
+SCEQ_SRM_DamTip_sol.nd = 3;
+SCEQ_SRM_DamTip_sol.nz = 1e-15;
+
+
+
+loop(npath,
+  loop(t$(ord(t)<=Nt),
+    
+    put t.tl:4:0;
+    put ccatotpath(t,npath):13:5;
+    put F_GHGabatepath(t,npath):13:5;
+    
+    put Cpath(t,npath):13:5;
+    put Miupath(t,npath):13:5;
+    put gpath(t,npath):13:5;
+    
+    put Kpath(t,npath):13:5;
+    put Tatpath(t,npath):13:5;
+    put Matpath(t,npath):13:5;
+    put lamKpath(t,npath):13:5;
+    put lamTatpath(t,npath):13:5;
+    put lamMatpath(t,npath):13:5;
+    put opt_SCC(t,npath):13:5;
+    put opt_tax(t,npath):13:5;
+    put lamECO2path(t,npath):13:5;    
+    put /;
+  );
+);
