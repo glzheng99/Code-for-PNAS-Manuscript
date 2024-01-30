@@ -1,0 +1,124 @@
+function PlotSimSolsDamTip(Nsim,SGEThresh,nu)
+% PlotSimSolsDamTip(1000000,0.1,0.0035)
+
+nPath = 102;
+T = nPath-2;
+
+%  t K MAT MU ML TA TL miu C SCC tax
+
+ncol = 15;
+ncol2= 9;
+
+[fid_out,msg] = fopen('SCEQ_SRM_DamTip_sol.put','rt','native');
+
+TT = fscanf(fid_out,'%e',[ncol,T*nPath])';
+fclose(fid_out);
+
+TApath = zeros(nPath,T);
+SCCpath = zeros(nPath,T);
+Taxpath = zeros(nPath,T);
+MIUpath = zeros(nPath,T);
+SGEpath = zeros(nPath,T);
+Kpath   = zeros(nPath,T);
+
+
+for i=1:nPath
+    ij = (i-1)*T;    
+    MIUpath(i,:) = TT((ij+1):(ij+T),5);    
+    SGEpath(i,:) = TT((ij+1):(ij+T),6);
+    TApath(i,:) = TT((ij+1):(ij+T),8);    
+    SCCpath(i,:) = TT((ij+1):(ij+T),13);
+    Taxpath(i,:) = TT((ij+1):(ij+T),14);
+    Kpath(i,:) = TT((ij+1):(ij+T),7);
+end
+
+
+
+MIUsim = zeros(Nsim,T);
+SGEsim = zeros(Nsim,T);
+TAsim = zeros(Nsim,T);
+SCCsim = zeros(Nsim,T);
+Taxsim = zeros(Nsim,T);
+Ksim = zeros(Nsim,T);
+
+MIUsim(:,1) = MIUpath(1,1);
+SGEsim(:,1) = SGEpath(1,1);
+TAsim(:,1) = TApath(1,1);
+SCCsim(:,1) = SCCpath(1,1);
+Taxsim(:,1) = Taxpath(1,1);
+Ksim(:,1) = Kpath(1,1);
+rs = rand(Nsim,T);
+for i=1:Nsim    
+    for t=1:T-1
+        prob = exp(-nu*max(0,SGEsim(i,t)-SGEThresh));            
+        if rs(i,t)>prob % tipping event happens at t+1
+            MIUsim(i,t+1:T) = MIUpath(t+1,t+1:T);
+            SGEsim(i,t+1:T) = SGEpath(t+1,t+1:T);
+            TAsim(i,t+1:T) = TApath(t+1,t+1:T);
+            SCCsim(i,t+1:T) = SCCpath(t+1,t+1:T);
+            Taxsim(i,t+1:T) = Taxpath(t+1,t+1:T);
+            Ksim(i,t+1:T) = Kpath(t+1,t+1:T);
+            break;
+        else
+            MIUsim(i,t+1) = MIUpath(1,t+1);
+            SGEsim(i,t+1) = SGEpath(1,t+1);
+            TAsim(i,t+1) = TApath(1,t+1);
+            SCCsim(i,t+1) = SCCpath(1,t+1);
+            Taxsim(i,t+1) = Taxpath(1,t+1);
+            Ksim(i,t+1) = Kpath(1,t+1);
+        end
+    end
+end
+
+
+[fid_out,msg] = fopen('SCEQ_SRM_DamTip_sol_det.put','rt','native');
+
+detsol = fscanf(fid_out,'%e',[ncol2,T])';
+fclose(fid_out);
+
+
+ Miu_det=(detsol(1:T,2))';
+ SGE_det=(detsol(1:T,3))';
+ TA_det=(detsol(1:T,4))'; 
+ SCC_det=(detsol(1:T,5))';
+ Tax_det=(detsol(1:T,6))';
+ K_det=(detsol(1:T,8))';
+
+
+[fid_out,msg] = fopen('SCEQ_SRM_DamTip_sol_ban.put','rt','native');
+
+bansol = fscanf(fid_out,'%e',[ncol2,T])';
+fclose(fid_out);
+
+ Miu_ban=(bansol(1:T,2))';
+ SGE_ban=(bansol(1:T,3))';
+ TA_ban=(bansol(1:T,4))'; 
+ SCC_ban=(bansol(1:T,5))';
+ Tax_ban=(bansol(1:T,6))';
+ K_ban=(bansol(1:T,8))';
+
+
+p1=0;
+p2=0.0001;
+p3=0.005;
+p4=0.01;
+p5=0.05;
+p6=1;
+
+pers = [0, p2, p3, p4, p5, 1];
+pers2 = [0,1-p2,1-p3,1-p4,1-p5,1];
+
+PlotQuantiles_Jump(MIUsim,' ',' Emssion Control Rate',T,pers,Miu_det,Miu_ban)
+saveas(gcf,  'miu_plot.jpg');
+PlotQuantiles_Jump2(SGEsim,' ',' Radiation Control Rate',T,pers2,SGE_det,SGE_ban)
+saveas(gcf,  'g_plot.jpg');
+PlotQuantiles_Jump(TAsim,'℃','Temperature',T,pers,TA_det,TA_ban)
+saveas(gcf,  'Tat_plot.jpg');
+PlotQuantiles_Jump(Ksim,'Trillion 2019 USD','K',T,pers,K_det,K_ban)
+saveas(gcf,  'K_plot.jpg');
+PlotQuantiles_Jump(SCCsim,' $/tC','Social Cost of Carbon ',T,pers,SCC_det,SCC_ban)
+saveas(gcf,  'SCC_plot.jpg');
+PlotQuantiles_Jump(Taxsim,'$/tCO2','Carbon Tax',T,pers,Tax_det,Tax_ban)
+saveas(gcf,  'Tax_plot.jpg');
+
+end
